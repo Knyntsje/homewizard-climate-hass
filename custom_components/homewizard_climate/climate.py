@@ -59,6 +59,7 @@ class HomeWizardClimateEntity(ClimateEntity):
         self._isIR = False
         self._isFAN = False
         self._isHEATER = False
+        self._isAIRCO = False
         self._isDEHUMID = False
         self._isAIRCOOLER = False
         self._logger = logging.getLogger(
@@ -70,6 +71,8 @@ class HomeWizardClimateEntity(ClimateEntity):
             self._isFAN = True
         if self._device_web_socket.device.type == HomeWizardClimateDeviceType.HEATER:
             self._isHEATER = True
+        if self._device_web_socket.device.type == HomeWizardClimateDeviceType.AIRCONDITIONER:
+            self._isAIRCO = True
         if self._device_web_socket.device.type == HomeWizardClimateDeviceType.DEHUMIDIFIER:
             self._isDEHUMID = True
 #       doesn't seem to work with ["homewizard-climate-ws==0.0.26"],.
@@ -103,7 +106,7 @@ class HomeWizardClimateEntity(ClimateEntity):
         if self._isAIRCOOLER or self._isFAN:
             return None
         return self._device_web_socket.last_state.current_temperature
-
+        
     @property
     def current_humidity(self) -> int:
         """Return the current temperature."""
@@ -131,6 +134,8 @@ class HomeWizardClimateEntity(ClimateEntity):
     @property
     def fan_modes(self):
         """Return the list of available fan modes."""
+        if self._isAIRCO:
+            return [FAN_LOW, FAN_MEDIUM, FAN_HIGH]
         if self._isDEHUMID:
             return [FAN_LOW, FAN_HIGH]
         if self._isFAN or self._isAIRCOOLER:
@@ -140,7 +145,7 @@ class HomeWizardClimateEntity(ClimateEntity):
     @property
     def preset_mode(self):
         """Return preset mode."""
-        if self._isDEHUMID or self._isAIRCOOLER or self._isFAN:
+        if self._isAIRCO or self._isDEHUMID or self._isAIRCOOLER or self._isFAN:
             return self._device_web_socket.last_state.mode
         if self._isHEATER:
             mode = self._device_web_socket.last_state.mode
@@ -152,6 +157,8 @@ class HomeWizardClimateEntity(ClimateEntity):
 
     @property
     def preset_modes(self):
+        if self._isAIRCO:
+            return ['dehumidify', 'fan', 'cool']
         if self._isDEHUMID:
             return ['dehumidify', 'fan', 'laundry', 'continuous', 'automatic']
         if self._isAIRCOOLER:
@@ -163,6 +170,13 @@ class HomeWizardClimateEntity(ClimateEntity):
 
     @property
     def supported_features(self) -> ClimateEntityFeature:
+        if self._isAIRCO:
+            return (
+                ClimateEntityFeature.TARGET_TEMPERATURE
+                | ClimateEntityFeature.PRESET_MODE
+                | ClimateEntityFeature.FAN_MODE
+                | ClimateEntityFeature.SWING_MODE
+            )
         if self._isDEHUMID:
             return (
                 ClimateEntityFeature.TARGET_HUMIDITY
@@ -207,22 +221,23 @@ class HomeWizardClimateEntity(ClimateEntity):
         if self._isDEHUMID:
             return [SWING_ON, SWING_OFF]
         """Return all possible swing modes."""
+        if self._isAIRCO:
+            return [SWING_HORIZONTAL, SWING_OFF]
         return [SWING_HORIZONTAL, SWING_OFF]
 
     @property
     def swing_mode(self) -> str:
         """Return current swing mode."""
-
+        if self._isAIRCO:
+            return (
+                SWING_HORIZONTAL
+                if self._device_web_socket.last_state.swing
+                else SWING_OFF
+            )
         if self._isDEHUMID:
             return (
                 SWING_ON
                 if self._device_web_socket.last_state.swing
-                else SWING_OFF
-            )
-        if self._isFAN:
-            return (
-                SWING_HORIZONTAL
-                if self._device_web_socket.last_state.oscillation
                 else SWING_OFF
             )
 
@@ -263,10 +278,12 @@ class HomeWizardClimateEntity(ClimateEntity):
     def hvac_modes(self):
         if self._isIR or self._isHEATER:
             return [HVACMode.HEAT, HVACMode.OFF]
+
         if self._isFAN or self._isDEHUMID:
             return [HVACMode.FAN_ONLY, HVACMode.OFF]
-        if self._isAIRCOOLER:
+        if self._isAIRCOOLER or self._isAIRCO:
             return [HVACMode.COOL, HVACMode.FAN_ONLY, HVACMode.OFF]
+          
         """Return the list of available operation modes."""
         return [HVACMode.HEAT, HVACMode.COOL, HVACMode.OFF]
 
@@ -299,6 +316,7 @@ class HomeWizardClimateEntity(ClimateEntity):
     def max_temp(self) -> float:
         """Return the maximum possible temperature."""
         return self.target_temperature_high
+
 
     @property
     def target_humidity(self) -> float:
@@ -333,10 +351,12 @@ class HomeWizardClimateEntity(ClimateEntity):
     def set_fan_mode(self, fan_mode: str) -> None:
         if self._isIR or self._isHEATER:
             raise NotImplementedError()
-        if self._isAIRCOOLER or self._isDEHUMID:
+
+        if self._isAIRCO or self._isAIRCOOLER or self._isDEHUMID:
             if fan_mode == FAN_MEDIUM:
                 self._device_web_socket.set_fan_speed('med')
             return self._device_web_socket.set_fan_speed(fan_mode)       
+          
         if self._isFAN:
             if fan_mode == FAN_ON:
                 self._device_web_socket.turn_on()
@@ -399,7 +419,8 @@ class HomeWizardClimateEntity(ClimateEntity):
 
     def set_swing_mode(self, swing_mode: str) -> None:
         """Set swing mode."""
-        if self._isDEHUMID:
+
+        if self._isAIRCO or self._isDEHUMID:
             if swing_mode == SWING_ON:
                 self._device_web_socket.set_swing('true')
             else:
@@ -426,7 +447,7 @@ class HomeWizardClimateEntity(ClimateEntity):
                 self._device_web_socket.set_mode("low")
             elif preset_mode == PRESET_BOOST:
                 self._device_web_socket.set_mode("high")
-        elif self._isDEHUMID:
+        elif self._isAIRCO or _isDEHUMID:
             self._device_web_socket.set_mode(preset_mode)
         else:
             raise NotImplementedError()
@@ -440,8 +461,8 @@ class HomeWizardClimateEntity(ClimateEntity):
         raise NotImplementedError()
 
     # def set_humidity(self, humidity: int) -> None:
-    #     """Not implemented."""
-    #     raise NotImplementedError()
+    #    """Not implemented."""
+    #    raise NotImplementedError()
 
     def on_device_state_change(
         self, state: HomeWizardClimateDeviceState, diff: str
